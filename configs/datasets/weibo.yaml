@@ -1,0 +1,25 @@
+dataset:
+  name: weibo
+  data_root: /data3/weibo
+  splits:
+    train: weibo_train.csv
+    test: weibo_test.csv
+  image_root: images
+  id_column: image_id
+  image_path_column:
+  text_column: text
+  fallback_text_column:
+  label_column: label
+  metadata_fields:
+    - image_id
+    - text
+  image_extensions:
+    - .jpg
+    - .jpeg
+    - .png
+    - .webp
+    - .bmp
+    - .gif
+  output_label_map:
+    0: real
+    1: fake

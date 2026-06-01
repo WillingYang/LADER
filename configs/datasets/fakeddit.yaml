@@ -1,0 +1,28 @@
+dataset:
+  name: fakeddit
+  data_root: /data3/fakeddit
+  splits:
+    train: multimodal_only_samples/multimodal_train.tsv
+    validate: multimodal_only_samples/multimodal_validate.tsv
+    test: multimodal_only_samples/multimodal_test_public.tsv
+  image_root: public_image_set
+  id_column: id
+  text_column: clean_title
+  fallback_text_column: title
+  label_column: 2_way_label
+  metadata_fields:
+    - clean_title
+    - title
+    - subreddit
+    - domain
+    - hasImage
+  image_extensions:
+    - .jpg
+    - .jpeg
+    - .png
+    - .webp
+    - .bmp
+    - .gif
+  output_label_map:
+    0: fake
+    1: real

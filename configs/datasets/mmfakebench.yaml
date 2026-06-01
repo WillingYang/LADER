@@ -1,0 +1,32 @@
+dataset:
+  name: mmfakebench
+  data_root: /data3/MMFakeBench
+  splits:
+    train: MMFakeBench_train.json
+    validate: MMFakeBench_val.json
+    test: MMFakeBench_test.json
+  image_root: .
+  split_image_roots:
+    validate: MMFakeBench_val
+    test: MMFakeBench_test
+  id_column: image_path
+  image_path_column: image_path
+  text_column: text
+  fallback_text_column:
+  label_column: gt_answers
+  metadata_fields:
+    - text
+    - image_path
+    - text_source
+    - image_source
+    - fake_cls
+  image_extensions:
+    - .jpg
+    - .jpeg
+    - .png
+    - .webp
+    - .bmp
+    - .gif
+  output_label_map:
+    true: real
+    false: fake

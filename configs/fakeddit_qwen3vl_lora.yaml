@@ -1,0 +1,73 @@
+seed: 42
+
+paths:
+  dataset_config: configs/datasets/fakeddit.yaml
+  model_path: /data/models/Qwen3-VL-8B-Instruct
+  output_dir: outputs/moedet/fakeddit_qwen3vl_lora_baseline
+
+data:
+  train_split: train
+  eval_split: validate
+  test_split: test
+  val_ratio: 0.1
+  max_train_samples:
+  max_eval_samples:
+  max_test_samples:
+
+model:
+  torch_dtype: bfloat16
+  trust_remote_code: true
+  attn_implementation: sdpa
+  gradient_checkpointing: true
+
+lora:
+  enabled: true
+  r: 16
+  alpha: 32
+  dropout: 0.05
+  target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+
+head:
+  pooling: last_token
+  dropout: 0.1
+
+prompt:
+  system_prompt: |
+    You are a multimodal misinformation detection encoder.
+  user_prompt_prefix: |
+    Classify the multimodal news item as REAL or FAKE according to the text claim, image authenticity, and text-image consistency.
+    Use the image and the news text jointly.
+  add_generation_prompt: true
+  max_length:
+
+training:
+  num_train_epochs: 3
+  per_device_train_batch_size: 1
+  per_device_eval_batch_size: 1
+  gradient_accumulation_steps: 8
+  learning_rate: 2.0e-4
+  weight_decay: 0.01
+  warmup_ratio: 0.03
+  logging_steps: 10
+  dataloader_num_workers: 0
+  ddp_find_unused_parameters: false
+  fp16: false
+  bf16: true
+
+evaluation:
+  eval_strategy: epoch
+  save_strategy: epoch
+  save_total_limit: 2
+  load_best_model_at_end: true
+  metric_for_best_model: macro_f1
+
+wandb:
+  enabled: true
+  project: moedet
+  entity:
+  run_name: fakeddit-qwen3vl-lora-baseline
+  mode: online

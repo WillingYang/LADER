@@ -1,0 +1,34 @@
+dataset:
+  name: twitter
+  data_root: /data3/twitter
+  splits_root: datasets/twitter
+  splits:
+    train: train_posts_clean.csv
+    test: test_posts.csv
+  image_root: .
+  split_image_roots:
+    train: images_train
+    test: images_test
+  id_column: post_id
+  image_id_column: image_id
+  image_path_column:
+  text_column: post_text
+  fallback_text_column:
+  label_column: label
+  metadata_fields:
+    - post_id
+    - post_text
+    - image_id
+    - user_id
+    - username
+    - timestamp
+  image_extensions:
+    - .jpg
+    - .jpeg
+    - .png
+    - .webp
+    - .bmp
+    - .gif
+  output_label_map:
+    real: real
+    fake: fake
