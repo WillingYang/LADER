@@ -17,7 +17,7 @@ data:
 model:
   torch_dtype: bfloat16
   trust_remote_code: true
-  attn_implementation: sdpa
+  attn_implementation: flashattentio2
   gradient_checkpointing: false
 
 lora:

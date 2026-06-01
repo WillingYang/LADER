@@ -2,7 +2,7 @@ seed: 42
 
 paths:
   dataset_config: configs/datasets/twitter.yaml
-  model_path: /data/models/Qwen3-VL-8B-Instruct
+  model_path: /data3/models/Qwen3-VL-8B-Instruct
   output_dir: outputs/moedet/twitter_qwen3vl_lora_baseline
 
 data:
@@ -17,7 +17,7 @@ data:
 model:
   torch_dtype: bfloat16
   trust_remote_code: true
-  attn_implementation: sdpa
+  attn_implementation: flash_attention_2
   gradient_checkpointing: true
 
 lora:
