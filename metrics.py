@@ -25,6 +25,9 @@ def binary_metrics(labels: Iterable[int], preds: Iterable[int], probs: Optional[
     precision_real = tn / max(tn + fn, 1)
     recall_real = tn / max(tn + fp, 1)
     f1_real = 2 * precision_real * recall_real / max(precision_real + recall_real, 1e-12)
+    macro_precision = (precision_fake + precision_real) / 2.0
+    macro_recall = (recall_fake + recall_real) / 2.0
+    macro_f1 = (f1_fake + f1_real) / 2.0
 
     metrics: Dict[str, Any] = {
         "accuracy": accuracy,
@@ -34,7 +37,9 @@ def binary_metrics(labels: Iterable[int], preds: Iterable[int], probs: Optional[
         "precision_real": precision_real,
         "recall_real": recall_real,
         "f1_real": f1_real,
-        "macro_f1": (f1_fake + f1_real) / 2.0,
+        "macro_precision": macro_precision,
+        "macro_recall": macro_recall,
+        "macro_f1": macro_f1,
         "confusion_matrix": {"tn": tn, "fp": fp, "fn": fn, "tp": tp},
         "num_samples": int(len(y_true)),
     }
@@ -49,6 +54,19 @@ def binary_metrics(labels: Iterable[int], preds: Iterable[int], probs: Optional[
     return metrics
 
 
+def summarized_metrics(metrics: Dict[str, Any]) -> Dict[str, Any]:
+    summary: Dict[str, Any] = {
+        "accuracy": metrics["accuracy"],
+        "macro_precision": metrics["macro_precision"],
+        "macro_recall": metrics["macro_recall"],
+        "macro_f1": metrics["macro_f1"],
+        "num_samples": metrics["num_samples"],
+    }
+    if "roc_auc" in metrics:
+        summary["roc_auc"] = metrics["roc_auc"]
+    return summary
+
+
 def compute_metrics_from_eval_pred(eval_pred: Any) -> Dict[str, float]:
     logits, labels = eval_pred
     if isinstance(logits, tuple):
@@ -58,16 +76,7 @@ def compute_metrics_from_eval_pred(eval_pred: Any) -> Dict[str, float]:
     preds = logits.argmax(axis=-1)
     probs = softmax(logits)
     metrics = binary_metrics(labels, preds, probs)
-    return {
-        "accuracy": metrics["accuracy"],
-        "precision_fake": metrics["precision_fake"],
-        "recall_fake": metrics["recall_fake"],
-        "macro_f1": metrics["macro_f1"],
-        "f1_fake": metrics["f1_fake"],
-        "precision_real": metrics["precision_real"],
-        "recall_real": metrics["recall_real"],
-        "f1_real": metrics["f1_real"],
-    }
+    return summarized_metrics(metrics)
 
 
 def softmax(logits: np.ndarray) -> np.ndarray:

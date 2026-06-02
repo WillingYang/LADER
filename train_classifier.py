@@ -243,9 +243,9 @@ def main() -> int:
         probs = np.exp(logits - logits.max(axis=-1, keepdims=True))
         probs = probs / probs.sum(axis=-1, keepdims=True)
 
-        from MoeDet.metrics import binary_metrics
+        from MoeDet.metrics import binary_metrics, summarized_metrics
 
-        test_metrics = binary_metrics(labels, preds, probs)
+        test_metrics = summarized_metrics(binary_metrics(labels, preds, probs))
         save_metrics(test_metrics, output_dir / "test_metrics.json")
         prediction_rows = []
         for row, pred, score in zip(rows["test"], preds.tolist(), probs[:, 1].tolist()):
