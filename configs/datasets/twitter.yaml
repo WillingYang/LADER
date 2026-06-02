@@ -1,7 +1,7 @@
 dataset:
   name: twitter
   data_root: /data3/twitter
-  splits_root: datasets/twitter
+  splits_root: 
   splits:
     train: train_posts_clean.csv
     test: test_posts.csv

@@ -60,8 +60,12 @@ def compute_metrics_from_eval_pred(eval_pred: Any) -> Dict[str, float]:
     metrics = binary_metrics(labels, preds, probs)
     return {
         "accuracy": metrics["accuracy"],
+        "precision_fake": metrics["precision_fake"],
+        "recall_fake": metrics["recall_fake"],
         "macro_f1": metrics["macro_f1"],
         "f1_fake": metrics["f1_fake"],
+        "precision_real": metrics["precision_real"],
+        "recall_real": metrics["recall_real"],
         "f1_real": metrics["f1_real"],
     }
 
