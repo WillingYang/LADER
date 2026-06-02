@@ -7,9 +7,9 @@ paths:
 
 data:
   train_split: train
-  eval_split: validate
+  eval_split: test
   test_split: test
-  val_ratio: 0.1
+  val_ratio: 0.0
   max_train_samples:
   max_eval_samples:
   max_test_samples:
@@ -32,8 +32,25 @@ lora:
     - o_proj
 
 head:
+  mode: dual_query_moe
   pooling: last_token
   dropout: 0.1
+  cross_attn_layers: 1
+  cross_attn_heads: 8
+  cross_attn_dropout: 0.1
+  cross_attn_ffn_mult: 4
+  fusion_hidden_dim: 1024
+
+moe:
+  enabled: true
+  num_experts: 4
+  router_hidden_dim: 512
+  router_dropout: 0.1
+  router_temperature: 1.0
+  expert_hidden_dim: 1024
+  expert_dropout: 0.1
+  load_balance_weight: 0.01
+  entropy_weight: 0.001
 
 prompt:
   system_prompt: |

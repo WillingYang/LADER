@@ -7,9 +7,9 @@ paths:
 
 data:
   train_split: train
-  eval_split:
+  eval_split: test
   test_split: test
-  val_ratio: 0.1
+  val_ratio: 0.0
   max_train_samples:
   max_eval_samples:
   max_test_samples:
@@ -17,8 +17,8 @@ data:
 model:
   torch_dtype: bfloat16
   trust_remote_code: true
-  attn_implementation: flashattentio2
-  gradient_checkpointing: false
+  attn_implementation: flash_attention_2
+  gradient_checkpointing: true
 
 lora:
   enabled: true
@@ -32,8 +32,25 @@ lora:
     - o_proj
 
 head:
+  mode: dual_query_moe
   pooling: last_token
   dropout: 0.1
+  cross_attn_layers: 1
+  cross_attn_heads: 8
+  cross_attn_dropout: 0.1
+  cross_attn_ffn_mult: 4
+  fusion_hidden_dim: 1024
+
+moe:
+  enabled: true
+  num_experts: 4
+  router_hidden_dim: 512
+  router_dropout: 0.1
+  router_temperature: 1.0
+  expert_hidden_dim: 1024
+  expert_dropout: 0.1
+  load_balance_weight: 0.01
+  entropy_weight: 0.001
 
 prompt:
   system_prompt: |
@@ -43,7 +60,9 @@ prompt:
     Use the image and the news text jointly.
   add_generation_prompt: true
   max_length:
-
+  debug_masks: true
+  debug_max_tokens: 256
+  
 training:
   num_train_epochs: 3
   per_device_train_batch_size: 1

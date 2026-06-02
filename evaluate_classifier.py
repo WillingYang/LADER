@@ -13,10 +13,11 @@ from transformers import Trainer, TrainingArguments
 
 from MoeDet.dataset import CollatorConfig, MultimodalNewsDataset, QwenVLClassificationCollator, build_model_rows
 from MoeDet.data_spec import load_dataset_spec
-from MoeDet.metrics import binary_metrics, save_metrics, save_predictions
+from MoeDet.metrics import binary_metrics, save_metrics, save_predictions, summarized_metrics
 from MoeDet.modeling import (
     ClassifierConfig,
     QwenVLForFakeNewsClassification,
+    infer_image_token_id,
     load_processor_and_backbone,
     maybe_apply_lora,
     resolve_dtype,
@@ -54,6 +55,7 @@ def main() -> int:
         attn_implementation=config["model"].get("attn_implementation"),
         trust_remote_code=bool(config["model"].get("trust_remote_code", True)),
     )
+    image_token_id = infer_image_token_id(backbone, processor)
     backbone = maybe_apply_lora(
         backbone=backbone,
         enabled=bool(config.get("lora", {}).get("enabled", True)),
@@ -67,7 +69,22 @@ def main() -> int:
         config=ClassifierConfig(
             dropout=float(config["head"].get("dropout", 0.1)),
             num_labels=2,
+            mode=str(config["head"].get("mode", "last_token_linear")),
             pooling=str(config["head"].get("pooling", "last_token")),
+            cross_attn_layers=int(config["head"].get("cross_attn_layers", 1)),
+            cross_attn_heads=int(config["head"].get("cross_attn_heads", 8)),
+            cross_attn_dropout=float(config["head"].get("cross_attn_dropout", 0.1)),
+            cross_attn_ffn_mult=int(config["head"].get("cross_attn_ffn_mult", 4)),
+            fusion_hidden_dim=int(config["head"].get("fusion_hidden_dim", 1024)),
+            moe_enabled=bool(config.get("moe", {}).get("enabled", False)),
+            num_experts=int(config.get("moe", {}).get("num_experts", 4)),
+            router_hidden_dim=int(config.get("moe", {}).get("router_hidden_dim", 512)),
+            router_dropout=float(config.get("moe", {}).get("router_dropout", 0.1)),
+            router_temperature=float(config.get("moe", {}).get("router_temperature", 1.0)),
+            expert_hidden_dim=int(config.get("moe", {}).get("expert_hidden_dim", 1024)),
+            expert_dropout=float(config.get("moe", {}).get("expert_dropout", 0.1)),
+            load_balance_weight=float(config.get("moe", {}).get("load_balance_weight", 0.01)),
+            entropy_weight=float(config.get("moe", {}).get("entropy_weight", 0.001)),
         ),
     )
     state_dict = torch.load(args.checkpoint_dir / "classifier_model.pt", map_location="cpu")
@@ -80,6 +97,9 @@ def main() -> int:
             user_prompt_prefix=str(config["prompt"].get("user_prompt_prefix", "")),
             add_generation_prompt=bool(config["prompt"].get("add_generation_prompt", True)),
             max_length=config["prompt"].get("max_length"),
+            image_token_id=image_token_id,
+            debug_masks=bool(config["prompt"].get("debug_masks", False)),
+            debug_max_tokens=int(config["prompt"].get("debug_max_tokens", 256)),
         ),
     )
 
@@ -106,7 +126,7 @@ def main() -> int:
     probs = np.exp(logits - logits.max(axis=-1, keepdims=True))
     probs = probs / probs.sum(axis=-1, keepdims=True)
 
-    metrics = binary_metrics(labels, preds, probs)
+    metrics = summarized_metrics(binary_metrics(labels, preds, probs))
     save_metrics(metrics, args.checkpoint_dir / f"{split}_metrics.json")
     prediction_rows = []
     for row, pred, score in zip(rows, preds.tolist(), probs[:, 1].tolist()):

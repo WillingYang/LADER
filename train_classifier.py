@@ -13,6 +13,7 @@ import numpy as np
 import torch
 import yaml
 from transformers import Trainer, TrainingArguments
+from transformers.trainer_utils import PREFIX_CHECKPOINT_DIR
 
 from MoeDet.dataset import (
     CollatorConfig,
@@ -26,10 +27,54 @@ from MoeDet.metrics import compute_metrics_from_eval_pred, save_metrics, save_pr
 from MoeDet.modeling import (
     ClassifierConfig,
     QwenVLForFakeNewsClassification,
+    infer_image_token_id,
     load_processor_and_backbone,
     maybe_apply_lora,
     resolve_dtype,
 )
+
+
+def using_test_as_eval(config: Dict[str, Any]) -> bool:
+    data_cfg = config["data"]
+    eval_split = data_cfg.get("eval_split")
+    test_split = data_cfg.get("test_split")
+    return bool(eval_split) and bool(test_split) and str(eval_split) == str(test_split)
+
+
+class SplitAwareTrainer(Trainer):
+    def __init__(self, *args: Any, eval_metric_prefix: str = "eval", **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.eval_metric_prefix = eval_metric_prefix
+
+    def evaluate(self, *args: Any, metric_key_prefix: Optional[str] = None, **kwargs: Any) -> Dict[str, float]:
+        if metric_key_prefix is None:
+            metric_key_prefix = self.eval_metric_prefix
+        return super().evaluate(*args, metric_key_prefix=metric_key_prefix, **kwargs)
+
+    def _determine_best_metric(self, metrics: Dict[str, float], trial: Any) -> bool:
+        if self.args.metric_for_best_model is None:
+            return False
+
+        metric_to_check = self.args.metric_for_best_model
+        try:
+            metric_value = metrics[metric_to_check]
+        except KeyError as exc:
+            available = sorted(metrics.keys())
+            raise KeyError(
+                f"The `metric_for_best_model` training argument is set to '{metric_to_check}', "
+                f"which is not found in the evaluation metrics. The available evaluation metrics are: {available}. "
+                "Consider changing the `metric_for_best_model` via the TrainingArguments."
+            ) from exc
+
+        operator = np.greater if self.args.greater_is_better else np.less
+        if self.state.best_metric is None or operator(metric_value, self.state.best_metric):
+            self.state.best_metric = metric_value
+            self.state.best_model_checkpoint = os.path.join(
+                self._get_output_dir(trial=trial),
+                f"{PREFIX_CHECKPOINT_DIR}-{self.state.global_step}",
+            )
+            return True
+        return False
 
 
 def parse_args() -> argparse.Namespace:
@@ -87,6 +132,11 @@ def build_training_args(config: Dict[str, Any], output_dir: Path) -> TrainingArg
     signature = inspect.signature(TrainingArguments.__init__)
     supported = set(signature.parameters.keys())
 
+    metric_prefix = "test" if using_test_as_eval(config) else "eval"
+    metric_for_best_model = str(eval_cfg.get("metric_for_best_model", "macro_f1"))
+    if not metric_for_best_model.startswith(f"{metric_prefix}_"):
+        metric_for_best_model = f"{metric_prefix}_{metric_for_best_model}"
+
     kwargs: Dict[str, Any] = {
         "output_dir": str(output_dir),
         "num_train_epochs": float(train_cfg.get("num_train_epochs", 3)),
@@ -100,7 +150,7 @@ def build_training_args(config: Dict[str, Any], output_dir: Path) -> TrainingArg
         "save_strategy": str(eval_cfg.get("save_strategy", "epoch")),
         "save_total_limit": int(eval_cfg.get("save_total_limit", 2)),
         "load_best_model_at_end": bool(eval_cfg.get("load_best_model_at_end", True)),
-        "metric_for_best_model": str(eval_cfg.get("metric_for_best_model", "macro_f1")),
+        "metric_for_best_model": metric_for_best_model,
         "greater_is_better": True,
         "fp16": bool(train_cfg.get("fp16", False)),
         "bf16": bool(train_cfg.get("bf16", False)),
@@ -182,6 +232,7 @@ def main() -> int:
         trust_remote_code=bool(config["model"].get("trust_remote_code", True)),
     )
     print(f"Loaded backbone with: {loader_name}")
+    image_token_id = infer_image_token_id(backbone, processor)
 
     if bool(config["model"].get("gradient_checkpointing", True)) and hasattr(backbone, "gradient_checkpointing_enable"):
         backbone.gradient_checkpointing_enable()
@@ -203,7 +254,22 @@ def main() -> int:
         config=ClassifierConfig(
             dropout=float(config["head"].get("dropout", 0.1)),
             num_labels=2,
+            mode=str(config["head"].get("mode", "last_token_linear")),
             pooling=str(config["head"].get("pooling", "last_token")),
+            cross_attn_layers=int(config["head"].get("cross_attn_layers", 1)),
+            cross_attn_heads=int(config["head"].get("cross_attn_heads", 8)),
+            cross_attn_dropout=float(config["head"].get("cross_attn_dropout", 0.1)),
+            cross_attn_ffn_mult=int(config["head"].get("cross_attn_ffn_mult", 4)),
+            fusion_hidden_dim=int(config["head"].get("fusion_hidden_dim", 1024)),
+            moe_enabled=bool(config.get("moe", {}).get("enabled", False)),
+            num_experts=int(config.get("moe", {}).get("num_experts", 4)),
+            router_hidden_dim=int(config.get("moe", {}).get("router_hidden_dim", 512)),
+            router_dropout=float(config.get("moe", {}).get("router_dropout", 0.1)),
+            router_temperature=float(config.get("moe", {}).get("router_temperature", 1.0)),
+            expert_hidden_dim=int(config.get("moe", {}).get("expert_hidden_dim", 1024)),
+            expert_dropout=float(config.get("moe", {}).get("expert_dropout", 0.1)),
+            load_balance_weight=float(config.get("moe", {}).get("load_balance_weight", 0.01)),
+            entropy_weight=float(config.get("moe", {}).get("entropy_weight", 0.001)),
         ),
     )
 
@@ -214,16 +280,22 @@ def main() -> int:
             user_prompt_prefix=str(config["prompt"].get("user_prompt_prefix", "")),
             add_generation_prompt=bool(config["prompt"].get("add_generation_prompt", True)),
             max_length=config["prompt"].get("max_length"),
+            image_token_id=image_token_id,
+            debug_masks=bool(config["prompt"].get("debug_masks", False)),
+            debug_max_tokens=int(config["prompt"].get("debug_max_tokens", 256)),
         ),
     )
 
-    trainer = Trainer(
+    eval_metric_prefix = "test" if using_test_as_eval(config) else "eval"
+
+    trainer = SplitAwareTrainer(
         model=model,
         args=build_training_args(config, output_dir),
         train_dataset=MultimodalNewsDataset(rows["train"]),
         eval_dataset=MultimodalNewsDataset(rows["eval"]),
         data_collator=collator,
         compute_metrics=compute_metrics_from_eval_pred,
+        eval_metric_prefix=eval_metric_prefix,
     )
 
     trainer.train()
@@ -232,7 +304,7 @@ def main() -> int:
     (output_dir / "used_config.yaml").write_text(yaml.safe_dump(config, allow_unicode=True, sort_keys=False), encoding="utf-8")
     torch.save(trainer.model.state_dict(), output_dir / "classifier_model.pt")
 
-    eval_metrics = trainer.evaluate()
+    eval_metrics = trainer.evaluate(metric_key_prefix=eval_metric_prefix)
     save_metrics(eval_metrics, output_dir / "eval_metrics.json")
 
     if rows["test"]:
