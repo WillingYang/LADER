@@ -263,8 +263,8 @@ class QueryCrossAttentionEncoder(nn.Module):
 class MoEFusionHead(nn.Module):
     def __init__(self, hidden_size: int, num_labels: int, config: ClassifierConfig) -> None:
         super().__init__()
-        router_input_dim = hidden_size * 4
-        expert_input_dim = hidden_size * 4
+        router_input_dim = hidden_size * 3
+        expert_input_dim = hidden_size * 3
         self.num_experts = max(config.num_experts, 1)
         self.temperature = max(float(config.router_temperature), 1e-6)
         self.load_balance_weight = float(config.load_balance_weight)
@@ -292,15 +292,12 @@ class MoEFusionHead(nn.Module):
 
     def forward(
         self,
+        pooled_repr: torch.Tensor,
         img_repr: torch.Tensor,
         txt_repr: torch.Tensor,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], torch.Tensor]:
-        diff = img_repr - txt_repr
-        abs_diff = diff.abs()
-        prod = img_repr * txt_repr
-
-        router_input = torch.cat([img_repr, txt_repr, abs_diff, prod], dim=-1)
-        expert_input = torch.cat([img_repr, txt_repr, diff, prod], dim=-1)
+        router_input = torch.cat([pooled_repr, img_repr, txt_repr], dim=-1)
+        expert_input = router_input
 
         router_logits = self.router(router_input) / self.temperature
         router_probs = torch.softmax(router_logits, dim=-1)
@@ -346,7 +343,7 @@ class QwenVLForFakeNewsClassification(nn.Module):
                 self.moe_head = MoEFusionHead(hidden_size=hidden_size, num_labels=config.num_labels, config=config)
                 self.fusion_head = None
             else:
-                fusion_dim = hidden_size * 4
+                fusion_dim = hidden_size * 3
                 self.moe_head = None
                 self.fusion_head = nn.Sequential(
                     nn.LayerNorm(fusion_dim),
@@ -397,6 +394,7 @@ class QwenVLForFakeNewsClassification(nn.Module):
 
         aux_loss = None
         if self.config.mode == "dual_query_moe":
+            pooled = self._pool_hidden(hidden, attention_mask)
             image_token_mask = self._ensure_non_empty_mask(inputs.get("image_token_mask"), attention_mask)
             text_token_mask = self._ensure_non_empty_mask(inputs.get("text_token_mask"), attention_mask)
             batch_size = hidden.size(0)
@@ -416,11 +414,9 @@ class QwenVLForFakeNewsClassification(nn.Module):
             ).squeeze(1)
 
             if self.moe_head is not None:
-                logits, aux_loss, _ = self.moe_head(img_repr, txt_repr)
+                logits, aux_loss, _ = self.moe_head(pooled, img_repr, txt_repr)
             else:
-                diff = img_repr - txt_repr
-                prod = img_repr * txt_repr
-                fused = torch.cat([img_repr, txt_repr, diff, prod], dim=-1)
+                fused = torch.cat([pooled, img_repr, txt_repr], dim=-1)
                 logits = self.fusion_head(fused)
         else:
             pooled = self._pool_hidden(hidden, attention_mask)

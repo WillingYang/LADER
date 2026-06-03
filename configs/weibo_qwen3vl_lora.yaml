@@ -32,7 +32,8 @@ lora:
     - o_proj
 
 head:
-  mode: dual_query_moe
+  # mode: dual_query_moe
+  mode: last_token_linear
   pooling: last_token
   dropout: 0.1
   cross_attn_layers: 1
@@ -42,7 +43,7 @@ head:
   fusion_hidden_dim: 1024
 
 moe:
-  enabled: true
+  enabled: false
   num_experts: 4
   router_hidden_dim: 512
   router_dropout: 0.1
@@ -60,11 +61,11 @@ prompt:
     Use the image and the news text jointly.
   add_generation_prompt: true
   max_length:
-  debug_masks: true
+  debug_masks: false
   debug_max_tokens: 256
-  
+
 training:
-  num_train_epochs: 3
+  num_train_epochs: 5
   per_device_train_batch_size: 1
   per_device_eval_batch_size: 1
   gradient_accumulation_steps: 8
