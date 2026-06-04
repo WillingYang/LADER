@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from peft import LoraConfig, TaskType, get_peft_model
 from transformers import AutoProcessor
 from transformers.modeling_outputs import SequenceClassifierOutput
@@ -157,6 +158,16 @@ class ClassifierConfig:
     num_labels: int = 2
     mode: str = "last_token_linear"
     pooling: str = "last_token"
+    layer_expert_count: int = 4
+    layer_top_k: int = 2
+    layer_router_hidden_dim: int = 512
+    layer_router_dropout: float = 0.1
+    layer_router_temperature: float = 1.0
+    layer_teacher_temperature: float = 1.0
+    layer_decay: float = 0.5
+    layer_expert_aux_weight: float = 0.2
+    layer_router_loss_weight: float = 0.2
+    residual_gate_hidden_dim: int = 512
     cross_attn_layers: int = 1
     cross_attn_heads: int = 8
     cross_attn_dropout: float = 0.1
@@ -178,6 +189,16 @@ class ClassifierConfig:
             "num_labels": self.num_labels,
             "mode": self.mode,
             "pooling": self.pooling,
+            "layer_expert_count": self.layer_expert_count,
+            "layer_top_k": self.layer_top_k,
+            "layer_router_hidden_dim": self.layer_router_hidden_dim,
+            "layer_router_dropout": self.layer_router_dropout,
+            "layer_router_temperature": self.layer_router_temperature,
+            "layer_teacher_temperature": self.layer_teacher_temperature,
+            "layer_decay": self.layer_decay,
+            "layer_expert_aux_weight": self.layer_expert_aux_weight,
+            "layer_router_loss_weight": self.layer_router_loss_weight,
+            "residual_gate_hidden_dim": self.residual_gate_hidden_dim,
             "cross_attn_layers": self.cross_attn_layers,
             "cross_attn_heads": self.cross_attn_heads,
             "cross_attn_dropout": self.cross_attn_dropout,
@@ -313,6 +334,136 @@ class MoEFusionHead(nn.Module):
         return logits, aux_loss, router_probs
 
 
+class LayerwiseExpertFusionHead(nn.Module):
+    def __init__(self, hidden_size: int, num_labels: int, config: ClassifierConfig) -> None:
+        super().__init__()
+        self.hidden_size = hidden_size
+        self.num_labels = num_labels
+        self.expert_count = max(int(config.layer_expert_count), 1)
+        self.top_k = max(1, min(int(config.layer_top_k), self.expert_count))
+        self.router_temperature = max(float(config.layer_router_temperature), 1e-6)
+        self.teacher_temperature = max(float(config.layer_teacher_temperature), 1e-6)
+        self.layer_decay = max(float(config.layer_decay), 0.0)
+        self.expert_aux_weight = max(float(config.layer_expert_aux_weight), 0.0)
+        self.router_loss_weight = max(float(config.layer_router_loss_weight), 0.0)
+        expert_dim = int(config.fusion_hidden_dim)
+
+        self.expert_projector = nn.Sequential(
+            nn.LayerNorm(hidden_size),
+            nn.Linear(hidden_size, expert_dim),
+            nn.GELU(),
+            nn.Dropout(config.dropout),
+        )
+        self.final_projector = nn.Sequential(
+            nn.LayerNorm(hidden_size),
+            nn.Linear(hidden_size, expert_dim),
+            nn.GELU(),
+            nn.Dropout(config.dropout),
+        )
+        self.shared_expert_head = nn.Linear(expert_dim, num_labels)
+        self.router = nn.Sequential(
+            nn.LayerNorm(hidden_size),
+            nn.Linear(hidden_size, int(config.layer_router_hidden_dim)),
+            nn.GELU(),
+            nn.Dropout(float(config.layer_router_dropout)),
+            nn.Linear(int(config.layer_router_hidden_dim), self.expert_count),
+        )
+        gate_hidden = max(int(config.residual_gate_hidden_dim), expert_dim)
+        self.residual_gate = nn.Sequential(
+            nn.LayerNorm(expert_dim * 2),
+            nn.Linear(expert_dim * 2, gate_hidden),
+            nn.GELU(),
+            nn.Dropout(config.dropout),
+            nn.Linear(gate_hidden, expert_dim),
+        )
+        self.final_classifier = nn.Linear(expert_dim, num_labels)
+
+    @staticmethod
+    def _compute_even_layer_indices(total_layers: int, num_experts: int) -> List[int]:
+        if total_layers <= 0:
+            return [0]
+        if num_experts <= 1:
+            return [total_layers - 1]
+        positions = torch.linspace(0, total_layers - 1, steps=num_experts)
+        indices = positions.round().to(torch.int64).tolist()
+        deduped: List[int] = []
+        for index in indices:
+            index = max(0, min(total_layers - 1, int(index)))
+            if index not in deduped:
+                deduped.append(index)
+        while len(deduped) < num_experts:
+            candidate = total_layers - 1 - len(deduped)
+            candidate = max(0, candidate)
+            if candidate not in deduped:
+                deduped.append(candidate)
+            else:
+                break
+        return deduped[:num_experts]
+
+    def _layer_prior_logits(self, num_layers: int, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
+        if num_layers <= 1 or self.layer_decay <= 0.0:
+            return torch.zeros(num_layers, device=device, dtype=dtype)
+        depth_positions = torch.arange(num_layers, device=device, dtype=dtype)
+        depth_positions = depth_positions / max(num_layers - 1, 1)
+        return self.layer_decay * depth_positions
+
+    def _select_topk_probs(self, router_probs: torch.Tensor) -> torch.Tensor:
+        if self.top_k >= router_probs.size(-1):
+            return router_probs
+        topk_values, topk_indices = torch.topk(router_probs, k=self.top_k, dim=-1)
+        masked_probs = torch.zeros_like(router_probs)
+        masked_probs.scatter_(dim=-1, index=topk_indices, src=topk_values)
+        denom = masked_probs.sum(dim=-1, keepdim=True).clamp_min(1e-12)
+        return masked_probs / denom
+
+    def forward(
+        self,
+        layer_hidden_states: List[torch.Tensor],
+        pooled_repr: torch.Tensor,
+        labels: Optional[torch.Tensor] = None,
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Dict[str, torch.Tensor]]:
+        batch_size = pooled_repr.size(0)
+        selected_indices = self._compute_even_layer_indices(len(layer_hidden_states), self.expert_count)
+        selected_states = [layer_hidden_states[index] for index in selected_indices]
+        layer_stack = torch.stack(selected_states, dim=1)
+        projected_layers = self.expert_projector(layer_stack)
+        expert_logits = self.shared_expert_head(projected_layers)
+
+        prior_logits = self._layer_prior_logits(projected_layers.size(1), pooled_repr.device, pooled_repr.dtype)
+        router_logits = self.router(pooled_repr) / self.router_temperature
+        router_logits = router_logits + prior_logits.unsqueeze(0)
+        router_probs = torch.softmax(router_logits, dim=-1)
+        topk_router_probs = self._select_topk_probs(router_probs)
+
+        fused_layer = torch.sum(topk_router_probs.unsqueeze(-1) * projected_layers, dim=1)
+        final_proj = self.final_projector(pooled_repr)
+        residual_gate = torch.sigmoid(self.residual_gate(torch.cat([final_proj, fused_layer], dim=-1)))
+        fused_repr = final_proj + residual_gate * fused_layer
+        logits = self.final_classifier(fused_repr)
+
+        aux_loss: Optional[torch.Tensor] = None
+        extras: Dict[str, torch.Tensor] = {
+            "router_probs": router_probs,
+            "topk_router_probs": topk_router_probs,
+            "selected_layer_indices": torch.tensor(selected_indices, device=pooled_repr.device, dtype=torch.long),
+        }
+
+        if labels is not None:
+            expanded_labels = labels.unsqueeze(1).expand(batch_size, projected_layers.size(1)).reshape(-1)
+            expert_loss_per_sample = F.cross_entropy(
+                expert_logits.reshape(-1, self.num_labels),
+                expanded_labels,
+                reduction="none",
+            ).view(batch_size, projected_layers.size(1))
+            teacher_probs = torch.softmax((-expert_loss_per_sample / self.teacher_temperature) + prior_logits.unsqueeze(0), dim=-1)
+            router_log_probs = torch.log(router_probs.clamp_min(1e-12))
+            router_loss = F.kl_div(router_log_probs, teacher_probs.detach(), reduction="batchmean")
+            expert_aux_loss = expert_loss_per_sample.mean()
+            aux_loss = (self.router_loss_weight * router_loss) + (self.expert_aux_weight * expert_aux_loss)
+            extras["teacher_probs"] = teacher_probs
+        return logits, aux_loss, extras
+
+
 class QwenVLForFakeNewsClassification(nn.Module):
     def __init__(self, backbone: Any, config: ClassifierConfig) -> None:
         super().__init__()
@@ -321,8 +472,11 @@ class QwenVLForFakeNewsClassification(nn.Module):
         hidden_size = infer_hidden_size(backbone)
         self.dropout = nn.Dropout(config.dropout)
         self.hidden_size = hidden_size
+        self.layerwise_head: Optional[LayerwiseExpertFusionHead] = None
 
-        if self.config.mode == "dual_query_moe":
+        if self.config.mode == "layerwise_topk_router":
+            self.layerwise_head = LayerwiseExpertFusionHead(hidden_size=hidden_size, num_labels=config.num_labels, config=config)
+        elif self.config.mode == "dual_query_moe":
             self.img_query = nn.Parameter(torch.randn(1, 1, hidden_size) / math.sqrt(hidden_size))
             self.txt_query = nn.Parameter(torch.randn(1, 1, hidden_size) / math.sqrt(hidden_size))
             self.img_encoder = QueryCrossAttentionEncoder(
@@ -393,7 +547,12 @@ class QwenVLForFakeNewsClassification(nn.Module):
         attention_mask = inputs.get("attention_mask")
 
         aux_loss = None
-        if self.config.mode == "dual_query_moe":
+        if self.config.mode == "layerwise_topk_router":
+            pooled = self._pool_hidden(hidden, attention_mask)
+            all_hidden_states = list(outputs.hidden_states[1:]) if len(outputs.hidden_states) > 1 else [hidden]
+            pooled_layer_states = [self._pool_hidden(layer_hidden, attention_mask) for layer_hidden in all_hidden_states]
+            logits, aux_loss, _ = self.layerwise_head(pooled_layer_states, pooled, labels=labels)
+        elif self.config.mode == "dual_query_moe":
             pooled = self._pool_hidden(hidden, attention_mask)
             image_token_mask = self._ensure_non_empty_mask(inputs.get("image_token_mask"), attention_mask)
             text_token_mask = self._ensure_non_empty_mask(inputs.get("text_token_mask"), attention_mask)

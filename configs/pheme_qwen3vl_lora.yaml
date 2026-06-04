@@ -32,9 +32,19 @@ lora:
     - o_proj
 
 head:
-  mode: dual_query_moe
+  mode: layerwise_topk_router
   pooling: last_token
   dropout: 0.1
+  layer_expert_count: 3
+  layer_top_k: 2
+  layer_router_hidden_dim: 384
+  layer_router_dropout: 0.1
+  layer_router_temperature: 1.0
+  layer_teacher_temperature: 1.0
+  layer_decay: 0.7
+  layer_expert_aux_weight: 0.15
+  layer_router_loss_weight: 0.15
+  residual_gate_hidden_dim: 512
   cross_attn_layers: 1
   cross_attn_heads: 8
   cross_attn_dropout: 0.1
@@ -42,7 +52,7 @@ head:
   fusion_hidden_dim: 1024
 
 moe:
-  enabled: true
+  enabled: false
   num_experts: 4
   router_hidden_dim: 512
   router_dropout: 0.1
@@ -86,5 +96,5 @@ wandb:
   enabled: true
   project: moedet
   entity:
-  run_name: pheme-qwen3vl-lora-baseline
+  run_name: pheme-qwen3vl-lora-layermoe
   mode: online
