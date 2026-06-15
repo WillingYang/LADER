@@ -47,20 +47,6 @@ dataset:
   data_root: /path/to/your/dataset
 ```
 
-For example:
-
-```yaml
-dataset:
-  data_root: /data/weibo
-```
-
-The main configs are located in:
-
-```text
-configs/
-configs/datasets/
-```
-
 ## Training
 
 Run from inside the repository:
