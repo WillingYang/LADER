@@ -1,4 +1,4 @@
-# MoeDet
+# LADER
 
 Lightweight training and evaluation code for multimodal fake-news detection with a `Qwen3-VL` backbone, LoRA tuning, and configurable classification heads.
 
@@ -239,7 +239,7 @@ If you use this codebase in your work, please cite the corresponding paper once 
 
 ```bibtex
 @misc{moedet,
-  title        = {MoeDet},
+  title        = {LADER},
   author       = {Anonymous},
   year         = {2026},
   note         = {Code release}
