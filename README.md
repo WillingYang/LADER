@@ -12,30 +12,6 @@ This repository supports the multimodal fake-news detection datasets used in the
 - Twitter
 - PHEME
 
-Due to dataset redistribution restrictions, raw datasets are not included in this repository. Please obtain the datasets from their original sources and place them under your local data directory.
-
-A typical data structure is:
-
-```text
-data/
-├── weibo/
-├── twitter/
-└── pheme/
-```
-
-The internal label convention is:
-
-```text
-0 = real
-1 = fake
-```
-
-Please check and update the label mapping in:
-
-```text
-configs/datasets/<dataset>.yaml
-```
-
 
 ## Environment
 
