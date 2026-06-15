@@ -182,55 +182,6 @@ For a reproducible experiment:
 
 Because `used_config.yaml` is saved after training, it is the easiest way to track the exact config used for a released checkpoint.
 
-## Common Issues
-
-### 1. Model path not found
-
-Check:
-
-- `paths.model_path`
-- whether the local model weights are available
-
-### 2. Dataset file not found
-
-Check:
-
-- `dataset.data_root`
-- split filenames under `dataset.splits`
-- `image_root`
-
-### 3. CUDA / flash attention mismatch
-
-If your runtime does not support the configured attention backend, update:
-
-```yaml
-model:
-  attn_implementation: none
-```
-
-### 4. DDP unused parameter errors
-
-If you disable parts of a head via config switches in future variants, set:
-
-```yaml
-training:
-  ddp_find_unused_parameters: true
-```
-
-## Engineering Notes for Open-Sourcing
-
-This repository intentionally keeps the core pipeline compact:
-
-- dataset logic is separated into `data_spec.py` and `dataset.py`
-- model/head logic is centralized in `modeling.py`
-- training and evaluation entrypoints are explicit and easy to trace
-
-For public release, we recommend:
-
-- removing private absolute paths from configs before publishing
-- keeping only small example metadata in `datasets/`
-- excluding checkpoints and outputs with `.gitignore`
-- documenting exact backbone and dataset sources in your paper/project page
 
 ## Citation
 
