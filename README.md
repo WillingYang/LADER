@@ -11,7 +11,6 @@ This repository is designed to be simple to read, easy to adapt, and straightfor
 - Config-driven dataset schema mapping
 - Multiple classifier-head variants through YAML configs
 - Hugging Face `Trainer` training/evaluation pipeline
-- Unified internal label convention: `0 = real`, `1 = fake`
 
 ## Repository Structure
 
