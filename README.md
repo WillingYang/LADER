@@ -74,32 +74,6 @@ You can also run training directly with Python:
 python train_classifier.py --config configs/weibo_qwen3vl_lora.yaml
 ```
 
-## Evaluation
-
-Evaluate a trained checkpoint:
-
-```bash
-cd MoeDet
-CUDA_VISIBLE_DEVICES=0 bash eval.sh weibo outputs/moedet/weibo_qwen3vl_lora_baseline
-```
-
-For other datasets:
-
-```bash
-cd MoeDet
-CUDA_VISIBLE_DEVICES=0 bash eval.sh twitter outputs/moedet/twitter_qwen3vl_lora_baseline
-CUDA_VISIBLE_DEVICES=0 bash eval.sh pheme outputs/moedet/pheme_qwen3vl_lora_baseline
-```
-
-You can also run evaluation directly with Python:
-
-```bash
-python evaluate_classifier.py \
-  --config configs/weibo_qwen3vl_lora.yaml \
-  --checkpoint-dir outputs/moedet/weibo_qwen3vl_lora_baseline
-```
-
-
 ## Citation
 
 If you use this codebase, please cite our paper once the bibliographic information is available.
