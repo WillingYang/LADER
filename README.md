@@ -1,5 +1,5 @@
 # LADER
-![pipline](pipline.png)
+![pipline](pipline1.png)
 Code for multimodal fake-news detection with a `Qwen3-VL` backbone and LoRA fine-tuning.
 
 This repository provides a simple training and evaluation pipeline for image-text fake-news classification. The code supports configurable dataset schemas, model paths, training settings, and classifier heads through YAML files.
